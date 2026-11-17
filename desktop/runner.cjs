@@ -112,6 +112,20 @@ function startHostLifecycleWatcher() {
 
     if (anyAlive) {
       hostMissingCount = 0;
+      // 若当前处于隐藏状态，说明反重力重新打开了界面，立即恢复任务栏显示！
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        log('Antigravity GUI detected active. Restoring taskbar status window.');
+        mainWindow.showInactive();
+        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+        mainWindow.moveTop();
+        mainWindow.webContents.send('taskbar:status', {
+          state: 'completed',
+          title: 'Antigravity 就绪',
+          detail: 'STANDBY · 随时可指派新任务',
+          step: 0,
+          ts: Date.now()
+        });
+      }
       return;
     }
 
@@ -121,12 +135,32 @@ function startHostLifecycleWatcher() {
       hostPids = currentPids;
       hostMissingCount = 0;
       log(`refreshed host GUI PIDs: ${hostPids.join(',')}`);
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        log('Antigravity GUI detected active on refresh. Restoring taskbar status window.');
+        mainWindow.showInactive();
+        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+        mainWindow.moveTop();
+        mainWindow.webContents.send('taskbar:status', {
+          state: 'completed',
+          title: 'Antigravity 就绪',
+          detail: 'STANDBY · 随时可指派新任务',
+          step: 0,
+          ts: Date.now()
+        });
+      }
     } else {
       hostMissingCount++;
-      log(`Antigravity GUI host missing count: ${hostMissingCount}`);
-      // 连续 2 次（约 3 秒）未检测到任何 Antigravity 界面主进程，随宿主同步关闭退出
+      // 连续 2 次（约 3 秒）检测不到任何反重力界面进程，说明反重力已被用户关闭，立即隐藏
       if (hostMissingCount >= 2) {
-        log('Antigravity GUI has closed. Exiting taskbar status window now.');
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+          log('Antigravity GUI has closed. Hiding taskbar status window immediately.');
+          mainWindow.hide();
+        }
+      }
+
+      // 若反重力连续关闭超过 30 分钟 (1200 次 * 1.5s = 1800s)，彻底退出进程释放全部内存
+      if (hostMissingCount >= 1200) {
+        log('Antigravity has been closed for >30m. Exiting background runner.');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.close();
         }
