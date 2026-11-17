@@ -63,11 +63,13 @@ async function startCoreWatcher() {
 
     core.on('status', (data) => {
       lastStatusData = data;
+      log(`Status event: [${data.state}] ${data.title} - ${data.detail}`);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('taskbar:status', data);
-        // 关键：状态更新时强行提升 Z 轴层级，防止被 Windows 11 任务栏遮盖
-        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-        mainWindow.moveTop();
+        if (mainWindow.isVisible()) {
+          mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+          mainWindow.moveTop();
+        }
       }
     });
 
@@ -77,98 +79,45 @@ async function startCoreWatcher() {
   }
 }
 
-function getAntigravityGuiPids() {
-  try {
-    const isWin = process.platform === 'win32';
-    if (!isWin) return [];
-    // 关键：必须排除带有 --import= 的后台 sidecar/daemon 进程，精准锁定 Antigravity 真实的桌面窗口主进程
-    const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--import=%\'" get ProcessId', {
-      encoding: 'utf-8',
-      windowsHide: true,
-      timeout: 3000
-    });
-    const pids = out.split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
-    return pids;
-  } catch (e) {
-    return [];
-  }
-}
-
 function startHostLifecycleWatcher() {
-  let hostPids = getAntigravityGuiPids();
-  log(`startHostLifecycleWatcher initialized with ${hostPids.length} GUI PIDs: ${hostPids.join(',')}`);
-  let hostMissingCount = 0;
+  const hostPidArg = process.argv.find(a => a.startsWith('--host-pid='));
+  let hostPid = hostPidArg ? parseInt(hostPidArg.split('=')[1], 10) : null;
 
-  setInterval(() => {
-    // 1. 优先使用极速系统调用 process.kill(pid, 0) 校验已有 PID，零额外 CPU 开销
-    let anyAlive = false;
-    for (const pid of hostPids) {
+  if (!hostPid) {
+    try {
+      const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 2000
+      });
+      const match = out.match(/\b(\d+)\b/);
+      if (match) hostPid = parseInt(match[1], 10);
+    } catch (e) {}
+  }
+
+  log(`startHostLifecycleWatcher watching host GUI PID: ${hostPid || 'none'}`);
+
+  if (hostPid) {
+    let missingCount = 0;
+    setInterval(() => {
       try {
-        process.kill(pid, 0);
-        anyAlive = true;
-        break;
-      } catch (e) {}
-    }
-
-    if (anyAlive) {
-      hostMissingCount = 0;
-      // 若当前处于隐藏状态，说明反重力重新打开了界面，立即恢复任务栏显示！
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-        log('Antigravity GUI detected active. Restoring taskbar status window.');
-        mainWindow.showInactive();
-        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-        mainWindow.moveTop();
-        mainWindow.webContents.send('taskbar:status', {
-          state: 'completed',
-          title: 'Antigravity 就绪',
-          detail: 'STANDBY · 随时可指派新任务',
-          step: 0,
-          ts: Date.now()
-        });
-      }
-      return;
-    }
-
-    // 2. 如果已知 PID 均已失效，执行一次进程命令行过滤二次确认
-    const currentPids = getAntigravityGuiPids();
-    if (currentPids.length > 0) {
-      hostPids = currentPids;
-      hostMissingCount = 0;
-      log(`refreshed host GUI PIDs: ${hostPids.join(',')}`);
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-        log('Antigravity GUI detected active on refresh. Restoring taskbar status window.');
-        mainWindow.showInactive();
-        mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
-        mainWindow.moveTop();
-        mainWindow.webContents.send('taskbar:status', {
-          state: 'completed',
-          title: 'Antigravity 就绪',
-          detail: 'STANDBY · 随时可指派新任务',
-          step: 0,
-          ts: Date.now()
-        });
-      }
-    } else {
-      hostMissingCount++;
-      // 连续 2 次（约 3 秒）检测不到任何反重力界面进程，说明反重力已被用户关闭，立即隐藏
-      if (hostMissingCount >= 2) {
-        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-          log('Antigravity GUI has closed. Hiding taskbar status window immediately.');
-          mainWindow.hide();
+        // 极速内核系统调用：耗时 0.0001ms，零开销，绝不阻塞主线程事件循环
+        process.kill(hostPid, 0);
+        missingCount = 0;
+      } catch (e) {
+        missingCount++;
+        // 宿主反重力主窗口已关闭，连续 2 秒确认后随宿主彻底退出进程，绝不残留与闪烁
+        if (missingCount >= 2) {
+          log(`Host Antigravity PID ${hostPid} has exited. Terminating taskbar runner completely.`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.close();
+          }
+          app.quit();
+          process.exit(0);
         }
       }
-
-      // 若反重力连续关闭超过 30 分钟 (1200 次 * 1.5s = 1800s)，彻底退出进程释放全部内存
-      if (hostMissingCount >= 1200) {
-        log('Antigravity has been closed for >30m. Exiting background runner.');
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.close();
-        }
-        app.quit();
-        process.exit(0);
-      }
-    }
-  }, 1500);
+    }, 1000);
+  }
 }
 
 function createWindow() {
@@ -241,7 +190,7 @@ function createWindow() {
 
     // 定时置顶心跳守护：彻底解决 Windows 11 任务栏重绘抢占 Z 轴将文字盖住的问题
     setInterval(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
         mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
         mainWindow.moveTop();
       }

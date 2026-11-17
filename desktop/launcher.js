@@ -67,6 +67,22 @@ export function isTaskbarRunning() {
   return false;
 }
 
+export function findAntigravityHostPid() {
+  try {
+    const isWin = process.platform === 'win32';
+    if (!isWin) return null;
+    const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+      encoding: 'utf-8',
+      windowsHide: true,
+      timeout: 2500
+    });
+    const match = out.match(/\b(\d+)\b/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export function launchTaskbarStatus() {
   if (isTaskbarRunning()) {
     return null;
@@ -82,8 +98,11 @@ export function launchTaskbarStatus() {
   }
 
   const runnerScript = path.join(__dirname, 'runner.cjs');
-  // 通过 WMI 创建系统级常驻进程，彻底脱离父终端树
-  const cmd = `wmic process call create "\\"${electronBin.replace(/\\/g, '\\\\')}\\" \\"${runnerScript.replace(/\\/g, '\\\\')}\\""`;
+  const hostPid = findAntigravityHostPid();
+  const hostPidArg = hostPid ? ` --host-pid=${hostPid}` : '';
+
+  // 通过 WMI 创建系统级常驻进程，彻底脱离父终端树，并传入宿主 PID 进行精准生命周期绑定
+  const cmd = `wmic process call create "\\"${electronBin.replace(/\\/g, '\\\\')}\\" \\"${runnerScript.replace(/\\/g, '\\\\')}\\"${hostPidArg}"`;
   try {
     const out = execSync(cmd, { windowsHide: true, encoding: 'utf-8' });
     const match = out.match(/ProcessId\s*=\s*(\d+);/);
