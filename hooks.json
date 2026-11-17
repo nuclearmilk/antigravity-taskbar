@@ -6,6 +6,12 @@
         "type": "command",
         "command": "node desktop/launcher.js"
       }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node desktop/launcher.js"
+      }
     ]
   }
 }

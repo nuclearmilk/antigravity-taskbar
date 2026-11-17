@@ -2,6 +2,7 @@ const { app, BrowserWindow, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
+const { execSync } = require('child_process');
 
 const logFile = path.resolve(__dirname, 'taskbar.log');
 function log(msg) {
@@ -74,6 +75,67 @@ async function startCoreWatcher() {
   } catch (err) {
     // 容错
   }
+}
+
+function getAntigravityPids() {
+  try {
+    const isWin = process.platform === 'win32';
+    if (!isWin) return [];
+    const out = execSync('tasklist /FI "IMAGENAME eq Antigravity.exe" /FO CSV /NH', {
+      encoding: 'utf-8',
+      windowsHide: true,
+      timeout: 2500
+    });
+    const pids = [];
+    for (const line of out.split(/\r?\n/)) {
+      const m = line.match(/^"Antigravity\.exe","(\d+)"/i);
+      if (m) pids.push(parseInt(m[1], 10));
+    }
+    return pids;
+  } catch (e) {
+    return [];
+  }
+}
+
+function startHostLifecycleWatcher() {
+  let hostPids = getAntigravityPids();
+  let hostMissingCount = 0;
+
+  setInterval(() => {
+    // 1. 优先使用极速系统调用 process.kill(pid, 0) 校验已有 PID，零额外 CPU 开销
+    let anyAlive = false;
+    for (const pid of hostPids) {
+      try {
+        process.kill(pid, 0);
+        anyAlive = true;
+        break;
+      } catch (e) {}
+    }
+
+    if (anyAlive) {
+      hostMissingCount = 0;
+      return;
+    }
+
+    // 2. 如果已知 PID 均已失效，执行一次进程名排查二次确认
+    const currentPids = getAntigravityPids();
+    if (currentPids.length > 0) {
+      hostPids = currentPids;
+      hostMissingCount = 0;
+    } else {
+      hostMissingCount++;
+      log(`Antigravity host missing count: ${hostMissingCount}`);
+      // 连续 2 次（约 3 秒）未检测到任何 Antigravity 宿主进程，随宿主同步关闭退出
+      if (hostMissingCount >= 2) {
+        log('Antigravity has exited. Closing taskbar status window.');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.close();
+        }
+        app.quit();
+        process.exit(0);
+      }
+    }
+  }, 1500);
 }
 
 function createWindow() {
@@ -153,6 +215,7 @@ function createWindow() {
     }, 800);
 
     startCoreWatcher();
+    startHostLifecycleWatcher();
   } catch (err) {
     log(`createWindow exception: ${err.stack || err}`);
   }
