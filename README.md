@@ -2,6 +2,8 @@
 
 > Windows 任务栏嵌入式状态栏，实时展示 Google Antigravity 后台 Agent 执行进度与任务状态。
 
+![Antigravity Taskbar Status 演示](docs/demo.gif)
+
 ---
 
 ## 🌟 特性
