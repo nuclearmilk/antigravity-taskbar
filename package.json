@@ -1,0 +1,22 @@
+{
+  "name": "antigravity-taskbar",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Windows 任务栏嵌入式状态栏，实时展示反重力后台 Agent 执行进度与状态",
+  "main": "core/index.js",
+  "scripts": {
+    "start": "node desktop/launcher.js"
+  },
+  "keywords": [
+    "antigravity",
+    "taskbar",
+    "status",
+    "agent",
+    "windows11"
+  ],
+  "author": "nuclearmilk",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Antigravity Taskbar Status</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+    }
+
+    #container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 0 10px;
+      font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+      text-align: center;
+      background: transparent;
+    }
+
+    .line1 {
+      font-size: 12.5px;
+      font-weight: 600;
+      line-height: 19px;
+      height: 19px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      color: rgba(22, 22, 25, 0.96);
+      text-shadow: 0 0 4px rgba(255, 255, 255, 0.95);
+      text-align: center;
+    }
+
+    .line2 {
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 16px;
+      height: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      color: rgba(65, 65, 72, 0.85);
+      text-shadow: 0 0 3px rgba(255, 255, 255, 0.95);
+    }
+
+    /* 深色模式自动适配 */
+    @media (prefers-color-scheme: dark) {
+      .line1 {
+        color: rgba(245, 245, 248, 0.98);
+        text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+      }
+      .line2 {
+        color: rgba(175, 175, 185, 0.88);
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+      }
+    }
+
+    /* 状态指示徽标：完全遵循行内文本基准线 (Baseline)，字号与文字 1:1 绝对对齐 */
+    .badge {
+      display: inline;
+      font-size: inherit;
+      font-weight: inherit;
+      line-height: inherit;
+      margin-right: 5px;
+    }
+
+    .badge-working {
+      color: #0284c7;
+      animation: breath 1.8s infinite ease-in-out;
+    }
+
+    .badge-completed {
+      color: #16a34a;
+    }
+
+    .badge-waiting {
+      color: #ea580c;
+      animation: breath 1.2s infinite ease-in-out;
+    }
+
+    @keyframes breath {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 1; }
+    }
+
+    .fade-update {
+      animation: textFade 0.25s ease-out;
+    }
+
+    @keyframes textFade {
+      from { opacity: 0.3; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div class="line1" id="line1">
+      <span class="badge badge-completed" id="badge">●</span>
+      <span id="titleText">Antigravity 就绪</span>
+    </div>
+    <div class="line2" id="line2">STANDBY · 等待下一指令</div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    const line1 = document.getElementById('line1');
+    const line2 = document.getElementById('line2');
+    const badge = document.getElementById('badge');
+    const titleText = document.getElementById('titleText');
+
+    let lastCompletedTimer = null;
+
+    ipcRenderer.on('taskbar:status', (event, data) => {
+      if (lastCompletedTimer) {
+        clearTimeout(lastCompletedTimer);
+        lastCompletedTimer = null;
+      }
+
+      line1.classList.remove('fade-update');
+      line2.classList.remove('fade-update');
+      void line1.offsetWidth;
+      line1.classList.add('fade-update');
+      line2.classList.add('fade-update');
+
+      // 彻底去除标题前可能残留的符号，确保只保留单个对齐的彩色指示灯
+      const rawTitle = data.title || 'Antigravity 就绪';
+      titleText.textContent = rawTitle.replace(/^[\s✦✔⏳●■◆]+\s*/, '');
+      line2.textContent = data.detail || 'STANDBY';
+
+      if (data.state === 'working') {
+        badge.className = 'badge badge-working';
+        badge.textContent = '✦';
+      } else if (data.state === 'waiting') {
+        badge.className = 'badge badge-waiting';
+        badge.textContent = '⏳';
+      } else if (data.state === 'completed') {
+        badge.className = 'badge badge-completed';
+        badge.textContent = '✔';
+
+        lastCompletedTimer = setTimeout(() => {
+          titleText.textContent = 'Antigravity 就绪';
+          line2.textContent = 'STANDBY · 随时可指派新任务';
+          badge.className = 'badge badge-completed';
+          badge.textContent = '●';
+        }, 20000);
+      } else {
+        badge.className = 'badge badge-completed';
+        badge.textContent = '●';
+      }
+    });
+  </script>
+</body>
+</html>

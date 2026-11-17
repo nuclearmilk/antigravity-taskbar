@@ -1,0 +1,11 @@
+{
+  "antigravity-taskbar": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node desktop/launcher.js"
+      }
+    ]
+  }
+}
