@@ -77,20 +77,17 @@ async function startCoreWatcher() {
   }
 }
 
-function getAntigravityPids() {
+function getAntigravityGuiPids() {
   try {
     const isWin = process.platform === 'win32';
     if (!isWin) return [];
-    const out = execSync('tasklist /FI "IMAGENAME eq Antigravity.exe" /FO CSV /NH', {
+    // 关键：必须排除带有 --import= 的后台 sidecar/daemon 进程，精准锁定 Antigravity 真实的桌面窗口主进程
+    const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--import=%\'" get ProcessId', {
       encoding: 'utf-8',
       windowsHide: true,
-      timeout: 2500
+      timeout: 3000
     });
-    const pids = [];
-    for (const line of out.split(/\r?\n/)) {
-      const m = line.match(/^"Antigravity\.exe","(\d+)"/i);
-      if (m) pids.push(parseInt(m[1], 10));
-    }
+    const pids = out.split(/\r?\n/).map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
     return pids;
   } catch (e) {
     return [];
@@ -98,7 +95,8 @@ function getAntigravityPids() {
 }
 
 function startHostLifecycleWatcher() {
-  let hostPids = getAntigravityPids();
+  let hostPids = getAntigravityGuiPids();
+  log(`startHostLifecycleWatcher initialized with ${hostPids.length} GUI PIDs: ${hostPids.join(',')}`);
   let hostMissingCount = 0;
 
   setInterval(() => {
@@ -117,17 +115,18 @@ function startHostLifecycleWatcher() {
       return;
     }
 
-    // 2. 如果已知 PID 均已失效，执行一次进程名排查二次确认
-    const currentPids = getAntigravityPids();
+    // 2. 如果已知 PID 均已失效，执行一次进程命令行过滤二次确认
+    const currentPids = getAntigravityGuiPids();
     if (currentPids.length > 0) {
       hostPids = currentPids;
       hostMissingCount = 0;
+      log(`refreshed host GUI PIDs: ${hostPids.join(',')}`);
     } else {
       hostMissingCount++;
-      log(`Antigravity host missing count: ${hostMissingCount}`);
-      // 连续 2 次（约 3 秒）未检测到任何 Antigravity 宿主进程，随宿主同步关闭退出
+      log(`Antigravity GUI host missing count: ${hostMissingCount}`);
+      // 连续 2 次（约 3 秒）未检测到任何 Antigravity 界面主进程，随宿主同步关闭退出
       if (hostMissingCount >= 2) {
-        log('Antigravity has exited. Closing taskbar status window.');
+        log('Antigravity GUI has closed. Exiting taskbar status window now.');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.close();
         }
