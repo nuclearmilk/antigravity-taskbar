@@ -157,6 +157,12 @@
         badge.textContent = '✔';
 
         lastCompletedTimer = setTimeout(() => {
+          line1.classList.remove('fade-update');
+          line2.classList.remove('fade-update');
+          void line1.offsetWidth;
+          line1.classList.add('fade-update');
+          line2.classList.add('fade-update');
+
           titleText.textContent = 'Antigravity 就绪';
           line2.textContent = 'STANDBY · 随时可指派新任务';
           badge.className = 'badge badge-completed';

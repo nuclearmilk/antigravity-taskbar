@@ -11,9 +11,9 @@
 - **任务栏原生嵌入**：紧贴 Windows 11 底部任务栏居中显示，完美融入系统原生视觉风格。
 - **纯文本无感呈现**：无多余背景框或悬浮胶囊，背景 100% 透明，还原纯粹极简体验。
 - **鼠标 100% 点击穿透**：全透明区域对鼠标事件完全穿透，不阻碍任务栏原有图标的点击与右键操作。
-- **任务栏零多余图标**：采用工具窗口机制，任务栏自身绝不弹出多余的进程图标。
+- **任务栏零多余图标**：采用原生无图标常驻机制（`skipTaskbar: true`），任务栏自身绝不弹出多余的进程图标。
 - **像素级基线对齐**：独家状态指示灯（运行中蓝色 `✦`、等待中橙色 `⏳`、已就绪绿色 `✔`），与文本基线（Baseline）1:1 绝对对齐。
-- **生命周期自动化**：依托 Antigravity 的 `SessionStart` 钩子，开启对话时自动静默常驻，单例互斥避免多开。
+- **生命周期自动化**：依托 Antigravity 的 `SessionStart` 与 `PreInvocation` 双钩子，开启对话或触发指令时自动静默常驻，单例互斥避免多开。
 
 ---
 
@@ -70,7 +70,7 @@ antigravity-taskbar/
 │   └── runner.cjs       # 无边框穿透置顶的 Electron 任务栏渲染窗口
 ├── ui/
 │   └── index.html       # 任务栏双行排版与单彩呼吸指示灯界面
-├── hooks.json           # Antigravity SessionStart 生命周期钩子配置
+├── hooks.json           # Antigravity 生命周期钩子配置（SessionStart + PreInvocation）
 ├── plugin.json          # Antigravity 插件元数据
 └── package.json         # Node.js 项目配置与依赖说明
 ```

@@ -16,7 +16,7 @@
   ],
   "author": "nuclearmilk",
   "license": "MIT",
-  "devDependencies": {
+  "dependencies": {
     "electron": "^33.2.0"
   }
 }

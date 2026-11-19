@@ -26,7 +26,6 @@ export function findElectron() {
   const candidates = [
     process.env.ELECTRON_PATH,
     path.resolve(__dirname, '../node_modules/electron/dist', exe),
-    path.join(process.env.USERPROFILE || process.env.HOME || '', '.dsh', 'electron', exe),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'electron', exe)
   ];
 
@@ -71,13 +70,36 @@ export function findAntigravityHostPid() {
   try {
     const isWin = process.platform === 'win32';
     if (!isWin) return null;
-    const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
-      encoding: 'utf-8',
-      windowsHide: true,
-      timeout: 2500
-    });
-    const match = out.match(/\b(\d+)\b/);
-    return match ? parseInt(match[1], 10) : null;
+
+    // 1. 优先使用现代化 PowerShell CIM 查询（无缝兼容 Windows 11 24H2 及以上废弃 WMIC 的系统）
+    try {
+      const script = `
+        $ProgressPreference = 'SilentlyContinue'
+        $p = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Antigravity.exe' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch '--import=' }
+        if ($p) { [Console]::WriteLine(($p | Select-Object -First 1).ProcessId) }
+      `;
+      const b64 = Buffer.from(script, 'utf16le').toString('base64');
+      const out = execSync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 3000
+      });
+      const match = out.match(/\b(\d+)\b/);
+      if (match) return parseInt(match[1], 10);
+    } catch (e) {}
+
+    // 2. 降级兼容：传统 WMIC 查询（兼容旧版系统）
+    try {
+      const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 2500
+      });
+      const match = out.match(/\b(\d+)\b/);
+      if (match) return parseInt(match[1], 10);
+    } catch (e) {}
+
+    return null;
   } catch (e) {
     return null;
   }
@@ -100,11 +122,35 @@ export function launchTaskbarStatus() {
   const runnerScript = path.join(__dirname, 'runner.cjs');
   const hostPid = findAntigravityHostPid();
   const hostPidArg = hostPid ? ` --host-pid=${hostPid}` : '';
+  const targetCmd = `"${electronBin}" "${runnerScript}"${hostPidArg}`;
 
-  // 通过 WMI 创建系统级常驻进程，彻底脱离父终端树，并传入宿主 PID 进行精准生命周期绑定
-  const cmd = `wmic process call create "\\"${electronBin.replace(/\\/g, '\\\\')}\\" \\"${runnerScript.replace(/\\/g, '\\\\')}\\"${hostPidArg}"`;
+  // 1. 优先使用现代化 PowerShell Invoke-CimMethod 创建系统独立常驻进程（脱离终端树，且兼容 Win11 24H2）
   try {
-    const out = execSync(cmd, { windowsHide: true, encoding: 'utf-8' });
+    const script = `
+      $ProgressPreference = 'SilentlyContinue'
+      $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${JSON.stringify(targetCmd)} }
+      if ($res.ReturnValue -eq 0) { [Console]::WriteLine($res.ProcessId) }
+    `;
+    const b64 = Buffer.from(script, 'utf16le').toString('base64');
+    const out = execSync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
+      windowsHide: true,
+      encoding: 'utf-8',
+      timeout: 4000
+    });
+    const match = out.match(/\b(\d+)\b/);
+    if (match && match[1]) {
+      const newPid = match[1];
+      try {
+        fs.writeFileSync(pidFile, newPid, 'utf-8');
+      } catch (e) {}
+      return parseInt(newPid, 10);
+    }
+  } catch (e) {}
+
+  // 2. 降级兼容：传统 WMI process call create
+  try {
+    const cmd = `wmic process call create "\\"${electronBin.replace(/\\/g, '\\\\')}\\" \\"${runnerScript.replace(/\\/g, '\\\\')}\\"${hostPidArg}"`;
+    const out = execSync(cmd, { windowsHide: true, encoding: 'utf-8', timeout: 3000 });
     const match = out.match(/ProcessId\s*=\s*(\d+);/);
     if (match && match[1]) {
       const newPid = match[1];

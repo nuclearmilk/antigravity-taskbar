@@ -85,14 +85,32 @@ function startHostLifecycleWatcher() {
 
   if (!hostPid) {
     try {
-      const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+      const script = `
+        $ProgressPreference = 'SilentlyContinue'
+        $p = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Antigravity.exe' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch '--import=' }
+        if ($p) { [Console]::WriteLine(($p | Select-Object -First 1).ProcessId) }
+      `;
+      const b64 = Buffer.from(script, 'utf16le').toString('base64');
+      const out = execSync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
         encoding: 'utf-8',
         windowsHide: true,
-        timeout: 2000
+        timeout: 3000
       });
       const match = out.match(/\b(\d+)\b/);
       if (match) hostPid = parseInt(match[1], 10);
     } catch (e) {}
+
+    if (!hostPid) {
+      try {
+        const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+          encoding: 'utf-8',
+          windowsHide: true,
+          timeout: 2000
+        });
+        const match = out.match(/\b(\d+)\b/);
+        if (match) hostPid = parseInt(match[1], 10);
+      } catch (e) {}
+    }
   }
 
   log(`startHostLifecycleWatcher watching host GUI PID: ${hostPid || 'none'}`);
