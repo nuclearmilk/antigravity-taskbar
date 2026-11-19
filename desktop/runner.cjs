@@ -121,6 +121,13 @@ function attachLivenessWatch(hostPid) {
       process.kill(hostPid, 0);
       missingCount = 0;
     } catch (e) {
+      // 关键：EPERM 表示进程存在但无权限发信号（如宿主以更高完整性级别运行），
+      // 必须视为"存活"，否则反重力开着任务栏也会自己退出。
+      if (e.code === 'EPERM') {
+        missingCount = 0;
+        return;
+      }
+      // ESRCH 才是真正的"进程不存在"
       missingCount++;
       // 宿主反重力主窗口已关闭，连续 2 秒确认后随宿主彻底退出进程，绝不残留与闪烁
       if (missingCount >= 2) {
