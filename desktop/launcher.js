@@ -165,9 +165,11 @@ export function launchTaskbarStatus() {
   return null;
 }
 
-try {
-  launchTaskbarStatus();
-} catch (e) {}
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    launchTaskbarStatus();
+  } catch (e) {}
 
-process.stdout.write(JSON.stringify({}));
-process.exit(0);
+  process.stdout.write(JSON.stringify({}));
+  process.exit(0);
+}

@@ -79,63 +79,101 @@ async function startCoreWatcher() {
   }
 }
 
+function detectHostPidViaCim() {
+  try {
+    const script = `
+      $ProgressPreference = 'SilentlyContinue'
+      $p = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Antigravity.exe' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch '--import=' }
+      if ($p) { [Console]::WriteLine(($p | Select-Object -First 1).ProcessId) }
+    `;
+    const b64 = Buffer.from(script, 'utf16le').toString('base64');
+    const out = execSync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
+      encoding: 'utf-8',
+      windowsHide: true,
+      timeout: 3000
+    });
+    const match = out.match(/\b(\d+)\b/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function detectHostPidViaWmic() {
+  try {
+    const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
+      encoding: 'utf-8',
+      windowsHide: true,
+      timeout: 2500
+    });
+    const match = out.match(/\b(\d+)\b/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function attachLivenessWatch(hostPid) {
+  let missingCount = 0;
+  setInterval(() => {
+    try {
+      // 极速内核系统调用：耗时 0.0001ms，零开销，绝不阻塞主线程事件循环
+      process.kill(hostPid, 0);
+      missingCount = 0;
+    } catch (e) {
+      missingCount++;
+      // 宿主反重力主窗口已关闭，连续 2 秒确认后随宿主彻底退出进程，绝不残留与闪烁
+      if (missingCount >= 2) {
+        log(`Host Antigravity PID ${hostPid} has exited. Terminating taskbar runner completely.`);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.close();
+        }
+        app.quit();
+        process.exit(0);
+      }
+    }
+  }, 1000);
+}
+
 function startHostLifecycleWatcher() {
   const hostPidArg = process.argv.find(a => a.startsWith('--host-pid='));
   let hostPid = hostPidArg ? parseInt(hostPidArg.split('=')[1], 10) : null;
 
   if (!hostPid) {
-    try {
-      const script = `
-        $ProgressPreference = 'SilentlyContinue'
-        $p = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Antigravity.exe' -and $_.CommandLine -notmatch '--type=' -and $_.CommandLine -notmatch '--import=' }
-        if ($p) { [Console]::WriteLine(($p | Select-Object -First 1).ProcessId) }
-      `;
-      const b64 = Buffer.from(script, 'utf16le').toString('base64');
-      const out = execSync(`powershell.exe -NoProfile -NonInteractive -EncodedCommand ${b64}`, {
-        encoding: 'utf-8',
-        windowsHide: true,
-        timeout: 3000
-      });
-      const match = out.match(/\b(\d+)\b/);
-      if (match) hostPid = parseInt(match[1], 10);
-    } catch (e) {}
-
-    if (!hostPid) {
-      try {
-        const out = execSync('wmic process where "Name=\'Antigravity.exe\' and not CommandLine like \'%--type=%\' and not CommandLine like \'%--import=%\'" get ProcessId', {
-          encoding: 'utf-8',
-          windowsHide: true,
-          timeout: 2000
-        });
-        const match = out.match(/\b(\d+)\b/);
-        if (match) hostPid = parseInt(match[1], 10);
-      } catch (e) {}
-    }
+    hostPid = detectHostPidViaCim() || detectHostPidViaWmic();
   }
 
   log(`startHostLifecycleWatcher watching host GUI PID: ${hostPid || 'none'}`);
 
   if (hostPid) {
-    let missingCount = 0;
-    setInterval(() => {
-      try {
-        // 极速内核系统调用：耗时 0.0001ms，零开销，绝不阻塞主线程事件循环
-        process.kill(hostPid, 0);
-        missingCount = 0;
-      } catch (e) {
-        missingCount++;
-        // 宿主反重力主窗口已关闭，连续 2 秒确认后随宿主彻底退出进程，绝不残留与闪烁
-        if (missingCount >= 2) {
-          log(`Host Antigravity PID ${hostPid} has exited. Terminating taskbar runner completely.`);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.close();
-          }
-          app.quit();
-          process.exit(0);
-        }
-      }
-    }, 1000);
+    attachLivenessWatch(hostPid);
+    return;
   }
+
+  // 兜底：探测失败时不再静默失效，改为周期性重试；
+  // 若始终失败则退出进程，由下一次 PreInvocation 钩子重新拉起 —— 每个新进程都是一次重新探测的机会。
+  // （任务栏由 hooks.json 的双钩子驱动，误退出的代价是几十秒不可见，远小于窗口永久残留。）
+  log('WARN: host PID unresolved, entering self-healing retry mode');
+  let retries = 0;
+  const retryTimer = setInterval(() => {
+    retries++;
+    const pid = detectHostPidViaCim() || detectHostPidViaWmic();
+    if (pid) {
+      clearInterval(retryTimer);
+      log(`host PID recovered: ${pid}, switching to liveness watch`);
+      attachLivenessWatch(pid);
+      return;
+    }
+    if (retries >= 6) {
+      clearInterval(retryTimer);
+      log('WARN: host PID still unresolved after 6 retries (~3min), exiting; next hook will relaunch.');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.close();
+      }
+      app.quit();
+      process.exit(0);
+    }
+  }, 30000);
 }
 
 function createWindow() {

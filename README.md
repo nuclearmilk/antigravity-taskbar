@@ -66,7 +66,7 @@ antigravity-taskbar/
 │   ├── parser.js        # 解析 Agent 工具调用、思考与完成事件
 │   └── index.js         # 核心事件协调器
 ├── desktop/
-│   ├── launcher.js      # 系统级常驻单例启动器（WMI 脱离父进程树）
+│   ├── launcher.js      # 系统级常驻单例启动器（CIM 创建独立进程，脱离父进程树）
 │   └── runner.cjs       # 无边框穿透置顶的 Electron 任务栏渲染窗口
 ├── ui/
 │   └── index.html       # 任务栏双行排版与单彩呼吸指示灯界面
