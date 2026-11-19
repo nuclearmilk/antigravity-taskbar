@@ -123,12 +123,13 @@ export function launchTaskbarStatus() {
   const hostPid = findAntigravityHostPid();
   const hostPidArg = hostPid ? ` --host-pid=${hostPid}` : '';
   const targetCmd = `"${electronBin}" "${runnerScript}"${hostPidArg}`;
+  const psLiteral = "'" + targetCmd.replace(/'/g, "''") + "'";
 
   // 1. 优先使用现代化 PowerShell Invoke-CimMethod 创建系统独立常驻进程（脱离终端树，且兼容 Win11 24H2）
   try {
     const script = `
       $ProgressPreference = 'SilentlyContinue'
-      $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${JSON.stringify(targetCmd)} }
+      $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${psLiteral} }
       if ($res.ReturnValue -eq 0) { [Console]::WriteLine($res.ProcessId) }
     `;
     const b64 = Buffer.from(script, 'utf16le').toString('base64');
