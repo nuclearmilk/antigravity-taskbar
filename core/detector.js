@@ -1,71 +1,129 @@
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
 
+const DEFAULT_PRODUCTS = ['antigravity', 'antigravity-cli', 'antigravity-ide'];
+
+function resolveBaseDirs(options = {}) {
+  if (Array.isArray(options.baseDirs) && options.baseDirs.length > 0) {
+    return options.baseDirs;
+  }
+  if (options.baseDir) {
+    return [options.baseDir];
+  }
+  if (process.env.ANTIGRAVITY_APP_DATA_DIR) {
+    return [path.join(process.env.ANTIGRAVITY_APP_DATA_DIR, 'brain')];
+  }
+  const geminiRoot = path.join(os.homedir(), '.gemini');
+  return DEFAULT_PRODUCTS.map((product) => path.join(geminiRoot, product, 'brain'));
+}
+
 export class ConversationDetector extends EventEmitter {
   constructor(options = {}) {
     super();
-    const defaultBaseDir = process.env.ANTIGRAVITY_APP_DATA_DIR
-      ? path.join(process.env.ANTIGRAVITY_APP_DATA_DIR, 'brain')
-      : path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
-
-    this.baseDir = options.baseDir || defaultBaseDir;
+    this.baseDirs = resolveBaseDirs(options);
+    this.baseDir = this.baseDirs[0];
     this.currentConvId = null;
     this.currentTranscriptPath = null;
-    this.pollIntervalMs = options.pollIntervalMs || 1000;
+    this.pollIntervalMs = options.pollIntervalMs || 2500;
     this.timer = null;
     this.lastMtime = 0;
+    this.hookPinnedAt = 0;
+    this._checking = false;
+    this._stopped = false;
   }
 
-  detectActiveConversation() {
-    if (!fs.existsSync(this.baseDir)) return null;
+  setActiveHint(convId, transcriptPath) {
+    if (convId) this.currentConvId = convId;
+    if (transcriptPath) this.currentTranscriptPath = transcriptPath;
+    this.hookPinnedAt = Date.now();
+  }
 
+  async _scanDir(baseDir) {
+    let entries;
     try {
-      const entries = fs.readdirSync(this.baseDir, { withFileTypes: true });
-      const convs = [];
+      entries = await fs.readdir(baseDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
 
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-        const transcriptPath = path.join(this.baseDir, entry.name, '.system_generated', 'logs', 'transcript.jsonl');
-        if (fs.existsSync(transcriptPath)) {
-          try {
-            const stat = fs.statSync(transcriptPath);
-            convs.push({
-              id: entry.name,
-              transcriptPath,
-              mtimeMs: stat.mtimeMs,
-              size: stat.size
-            });
-          } catch (e) {}
-        }
+    const convs = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const transcriptPath = path.join(
+        baseDir,
+        entry.name,
+        '.system_generated',
+        'logs',
+        'transcript.jsonl'
+      );
+      try {
+        const stat = await fs.stat(transcriptPath);
+        convs.push({
+          id: entry.name,
+          transcriptPath,
+          mtimeMs: stat.mtimeMs,
+          size: stat.size
+        });
+      } catch {
+        // transcript.jsonl does not exist yet
+      }
+    }
+
+    return convs;
+  }
+
+  async detectActiveConversation() {
+    const results = await Promise.all(this.baseDirs.map((dir) => this._scanDir(dir)));
+    const convs = results.flat();
+    convs.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return convs[0] || null;
+  }
+
+  async checkOnce() {
+    if (this._checking || this._stopped) return;
+    this._checking = true;
+    try {
+      const active = await this.detectActiveConversation();
+      if (!active || this._stopped) return;
+
+      const sameConv =
+        active.id === this.currentConvId &&
+        active.transcriptPath === this.currentTranscriptPath;
+      if (sameConv) {
+        this.lastMtime = active.mtimeMs;
+        return;
       }
 
-      convs.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      return convs[0] || null;
-    } catch (e) {
-      return null;
+      if (
+        this.hookPinnedAt &&
+        Date.now() - this.hookPinnedAt < 10000 &&
+        active.mtimeMs <= this.hookPinnedAt
+      ) {
+        return;
+      }
+
+      this.currentConvId = active.id;
+      this.currentTranscriptPath = active.transcriptPath;
+      this.lastMtime = active.mtimeMs;
+      this.emit('switched', active);
+    } finally {
+      this._checking = false;
     }
   }
 
   start() {
-    const check = () => {
-      const active = this.detectActiveConversation();
-      if (!active) return;
-
-      if (active.id !== this.currentConvId) {
-        this.currentConvId = active.id;
-        this.currentTranscriptPath = active.transcriptPath;
-        this.lastMtime = active.mtimeMs;
-        this.emit('switched', active);
-      }
-    };
-
-    check();
-    this.timer = setInterval(check, this.pollIntervalMs);
+    this.stop();
+    this._stopped = false;
+    void this.checkOnce();
+    this.timer = setInterval(() => {
+      void this.checkOnce();
+    }, this.pollIntervalMs);
   }
 
   stop() {
+    this._stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

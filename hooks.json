@@ -4,13 +4,22 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "node desktop/launcher.js"
+        "command": "node desktop/launcher.js",
+        "timeout": 5
       }
     ],
     "PreInvocation": [
       {
         "type": "command",
-        "command": "node desktop/launcher.js"
+        "command": "node desktop/launcher.js",
+        "timeout": 5
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node desktop/launcher.js",
+        "timeout": 5
       }
     ]
   }

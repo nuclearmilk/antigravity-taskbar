@@ -5,7 +5,8 @@
   "description": "Windows 任务栏嵌入式状态栏，实时展示反重力后台 Agent 执行进度与状态",
   "main": "core/index.js",
   "scripts": {
-    "start": "node desktop/launcher.js"
+    "start": "node desktop/launcher.js",
+    "test": "node --test"
   },
   "keywords": [
     "antigravity",

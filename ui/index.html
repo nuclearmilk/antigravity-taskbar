@@ -60,16 +60,26 @@
       text-shadow: 0 0 3px rgba(255, 255, 255, 0.95);
     }
 
-    /* 深色模式自动适配 */
+    /* 深色任务栏主题：优先跟随 Windows SystemUsesLightTheme，未设置时回退到 prefers-color-scheme */
     @media (prefers-color-scheme: dark) {
-      .line1 {
+      :root:not([data-theme="light"]) .line1 {
         color: rgba(245, 245, 248, 0.98);
         text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
       }
-      .line2 {
+      :root:not([data-theme="light"]) .line2 {
         color: rgba(175, 175, 185, 0.88);
         text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
       }
+    }
+
+    :root[data-theme="dark"] .line1 {
+      color: rgba(245, 245, 248, 0.98);
+      text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
+    }
+
+    :root[data-theme="dark"] .line2 {
+      color: rgba(175, 175, 185, 0.88);
+      text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
     }
 
     /* 状态指示徽标：完全遵循行内文本基准线 (Baseline)，字号与文字 1:1 绝对对齐 */
@@ -93,6 +103,10 @@
     .badge-waiting {
       color: #ea580c;
       animation: breath 1.2s infinite ease-in-out;
+    }
+
+    .badge-error {
+      color: #dc2626;
     }
 
     @keyframes breath {
@@ -120,8 +134,6 @@
   </div>
 
   <script>
-    const { ipcRenderer } = require('electron');
-
     const line1 = document.getElementById('line1');
     const line2 = document.getElementById('line2');
     const badge = document.getElementById('badge');
@@ -129,21 +141,34 @@
 
     let lastCompletedTimer = null;
 
-    ipcRenderer.on('taskbar:status', (event, data) => {
-      if (lastCompletedTimer) {
-        clearTimeout(lastCompletedTimer);
-        lastCompletedTimer = null;
-      }
-
+    function triggerFade() {
       line1.classList.remove('fade-update');
       line2.classList.remove('fade-update');
       void line1.offsetWidth;
       line1.classList.add('fade-update');
       line2.classList.add('fade-update');
+    }
+
+    function applyTheme(theme) {
+      if (theme === 'dark' || theme === 'light') {
+        document.documentElement.setAttribute('data-theme', theme);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    }
+
+    function applyStatus(data) {
+      if (!data || typeof data !== 'object') return;
+      if (lastCompletedTimer) {
+        clearTimeout(lastCompletedTimer);
+        lastCompletedTimer = null;
+      }
+
+      triggerFade();
 
       // 彻底去除标题前可能残留的符号，确保只保留单个对齐的彩色指示灯
       const rawTitle = data.title || 'Antigravity 就绪';
-      titleText.textContent = rawTitle.replace(/^[\s✦✔⏳●■◆]+\s*/, '');
+      titleText.textContent = rawTitle.replace(/^[\s✦✔⏳⧗✖●■◆]+\s*/, '');
       line2.textContent = data.detail || 'STANDBY';
 
       if (data.state === 'working') {
@@ -151,18 +176,16 @@
         badge.textContent = '✦';
       } else if (data.state === 'waiting') {
         badge.className = 'badge badge-waiting';
-        badge.textContent = '⏳';
+        badge.textContent = '⧗';
+      } else if (data.state === 'error') {
+        badge.className = 'badge badge-error';
+        badge.textContent = '✖';
       } else if (data.state === 'completed') {
         badge.className = 'badge badge-completed';
         badge.textContent = '✔';
 
         lastCompletedTimer = setTimeout(() => {
-          line1.classList.remove('fade-update');
-          line2.classList.remove('fade-update');
-          void line1.offsetWidth;
-          line1.classList.add('fade-update');
-          line2.classList.add('fade-update');
-
+          triggerFade();
           titleText.textContent = 'Antigravity 就绪';
           line2.textContent = 'STANDBY · 随时可指派新任务';
           badge.className = 'badge badge-completed';
@@ -172,7 +195,12 @@
         badge.className = 'badge badge-completed';
         badge.textContent = '●';
       }
-    });
+    }
+
+    if (window.taskbarAPI) {
+      window.taskbarAPI.onTheme(applyTheme);
+      window.taskbarAPI.onStatus(applyStatus);
+    }
   </script>
 </body>
 </html>
