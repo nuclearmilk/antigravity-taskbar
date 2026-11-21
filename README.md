@@ -13,7 +13,16 @@
 - **鼠标 100% 点击穿透**：全透明区域对鼠标事件完全穿透，不阻碍任务栏原有图标的点击与右键操作。
 - **任务栏零多余图标**：采用原生无图标常驻机制（`skipTaskbar: true`），任务栏自身绝不弹出多余的进程图标。
 - **像素级基线对齐**：单色状态指示灯（运行中蓝色 `✦`、等待中橙色 `⧗`、已就绪绿色 `✔`/`●`、异常红色 `✖`），与文本基线（Baseline）1:1 绝对对齐。
-- **原生 Hook 协议驱动**：接入 `SessionStart`、`PreInvocation` 与 `Stop` 钩子，通过命名管道实时接收精确会话路径与终态事件。
+- **原生 Hook 协议驱动**：接入 `SessionStart`、`PreInvocation` 与 `Stop` 钩子，通过命名管道实时接收精确会话路径与终态事件，同时兼容 Antigravity 桌面端、CLI (`agy`) 与 IDE。
+- **生命周期自动跟随**：基于进程树精准绑定 Antigravity GUI 主进程（兼容提权运行与 Windows 11 24H2+），关闭宿主时自动优雅退出，纯 CLI 模式下在空闲 3 分钟后自动回收。
+
+---
+
+## 📋 环境要求
+
+- **操作系统**：Windows 10 / Windows 11（全面兼容 24H2+，无需 WMIC）
+- **Node.js**：`>= 18.0.0`
+- **宿主环境**：Google Antigravity（桌面端 / CLI / IDE）
 
 ---
 
@@ -21,11 +30,12 @@
 
 ### 1. 安装插件
 
-将本项目克隆或放置到您的 Antigravity 全局插件目录下：
+将本项目克隆或放置到您的 Antigravity 全局插件目录下（如目录不存在请先创建）：
 
-```bash
+```powershell
 # 默认插件目录位于用户主目录下的 .gemini/config/plugins/
-cd ~/.gemini/config/plugins
+New-Item -ItemType Directory -Force -Path "$HOME/.gemini/config/plugins" | Out-Null
+cd "$HOME/.gemini/config/plugins"
 git clone https://github.com/nuclearmilk/antigravity-taskbar.git
 ```
 
@@ -77,6 +87,37 @@ agy plugin disable antigravity-taskbar
 | `visibleOnFullScreen` | `boolean` | `false` | 仅 macOS 生效（Electron `setVisibleOnAllWorkspaces` 的全屏控制受限于平台原生 API，Windows 上置顶层级按 `screen-saver` 保持） |
 
 也支持通过环境变量临时覆盖：`ANTIGRAVITY_TASKBAR_ALIGN`、`ANTIGRAVITY_TASKBAR_OFFSET_X`、`ANTIGRAVITY_TASKBAR_WIDTH`、`ANTIGRAVITY_TASKBAR_FULLSCREEN`。
+
+> **提示（避开 Windows 11 居中任务栏图标）**：如果任务栏图标居中导致文字重叠，可将配置调整到托盘左侧空白区，例如：
+>
+> ```json
+> {
+>   "align": "right",
+>   "offsetX": -260,
+>   "width": 360
+> }
+> ```
+
+---
+
+## 🔄 更新与排查
+
+### 更新插件
+
+```powershell
+cd "$HOME/.gemini/config/plugins/antigravity-taskbar"
+git pull
+npm install
+```
+
+更新代码后，重启 Antigravity（或先结束旧的 `electron.exe` 状态栏进程），下次触发对话时即会自动拉起新版本。
+
+### 查看运行日志
+
+运行日志会自动轮转（单文件上限 `512KB`），默认位置为：
+
+- 插件托管运行：`${PLUGIN_DATA}/taskbar.log`
+- 独立启动或未注入 `PLUGIN_DATA` 时：`%TEMP%\antigravity-taskbar\taskbar.log`
 
 ---
 

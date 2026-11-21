@@ -17,6 +17,17 @@
   ],
   "author": "nuclearmilk",
   "license": "MIT",
+  "homepage": "https://github.com/nuclearmilk/antigravity-taskbar#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nuclearmilk/antigravity-taskbar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nuclearmilk/antigravity-taskbar/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "electron": "^33.2.0"
   }
