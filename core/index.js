@@ -1,7 +1,31 @@
 import { ConversationDetector } from './detector.js';
 import { TranscriptTailer } from './tailer.js';
-import { EventParser } from './parser.js';
+import { EventParser, buildReviewWaitingStatus } from './parser.js';
 import { EventEmitter } from 'events';
+import path from 'path';
+
+const TERMINAL_CLEAR_REASONS = new Set([
+  'ERROR',
+  'USER_CANCELED',
+  'TERMINAL_CUSTOM_HOOK',
+  'MAX_INVOCATIONS',
+  'MAX_FORCED_INVOCATIONS',
+  'MAX_TOKEN_BUDGET_EXCEEDED'
+]);
+
+function normalizePathKey(p) {
+  if (typeof p !== 'string' || !p.trim()) return '';
+  const resolved = path.resolve(p);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isFullTranscriptPath(p) {
+  return typeof p === 'string' && path.basename(p).toLowerCase() === 'transcript_full.jsonl';
+}
+
+function isCompactTranscriptPath(p) {
+  return typeof p === 'string' && path.basename(p).toLowerCase() === 'transcript.jsonl';
+}
 
 function truncateError(text, maxLen = 45) {
   if (typeof text !== 'string') return '';
@@ -128,11 +152,12 @@ export class TaskbarCore extends EventEmitter {
   attachToConversation(conv) {
     if (!conv || !conv.transcriptPath) return;
     const convId = conv.id || conv.transcriptPath;
-    if (
-      this.currentConvId === convId &&
-      this.currentTranscriptPath === conv.transcriptPath &&
-      this.tailer
-    ) {
+    const samePath =
+      normalizePathKey(this.currentTranscriptPath) === normalizePathKey(conv.transcriptPath);
+    const keepFullOverCompact =
+      isFullTranscriptPath(this.currentTranscriptPath) &&
+      isCompactTranscriptPath(conv.transcriptPath);
+    if (this.currentConvId === convId && this.tailer && (samePath || keepFullOverCompact)) {
       return;
     }
 
@@ -194,7 +219,21 @@ export class TaskbarCore extends EventEmitter {
 
     if (payload.hookEventName === 'Stop') {
       this._stoppedStep = this.parser.currentStep;
-      this._emitStatus(buildStopStatus(payload, this.parser.currentStep));
+      const reason = typeof payload.terminationReason === 'string' ? payload.terminationReason : '';
+      if (TERMINAL_CLEAR_REASONS.has(reason)) {
+        this.parser.clearPendingReview();
+        this._emitStatus(buildStopStatus(payload, this.parser.currentStep));
+      } else if (this.parser.pendingReview) {
+        this._emitStatus(
+          buildReviewWaitingStatus(this.parser.pendingReview, {
+            step: this.parser.currentStep,
+            eventTs: Date.now(),
+            isHistorical: false
+          })
+        );
+      } else {
+        this._emitStatus(buildStopStatus(payload, this.parser.currentStep));
+      }
     }
   }
 

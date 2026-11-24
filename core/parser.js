@@ -5,13 +5,76 @@ const HISTORICAL_THRESHOLD_MS = 20000;
 
 function strArg(value) {
   if (typeof value !== 'string') return '';
-  return value.replace(/^["']|["']$/g, '').trim();
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'string') {
+        return parsed.trim();
+      }
+    } catch {
+      // fallback to quote stripping
+    }
+  }
+  return trimmed.replace(/^["']|["']$/g, '').trim();
 }
 
 function truncate(text, maxLen = 45) {
   if (!text) return '';
   if (text.length <= maxLen) return text;
   return `${text.slice(0, Math.max(1, maxLen - 3))}...`;
+}
+
+function parseArtifactMetadata(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function inspectArtifactFeedback(toolCalls) {
+  let cleared = null;
+  for (const call of toolCalls) {
+    if (!call || typeof call !== 'object') continue;
+    const args = call.args && typeof call.args === 'object' ? call.args : null;
+    if (!args) continue;
+    const meta = parseArtifactMetadata(args.ArtifactMetadata);
+    if (!meta) continue;
+    const rawPath = strArg(args.Path) || strArg(args.TargetFile);
+    const fileName = rawPath ? path.basename(rawPath) : '';
+    if (meta.RequestFeedback === true) {
+      return { requested: true, fileName };
+    }
+    if (meta.RequestFeedback === false) {
+      cleared = { cleared: true, fileName };
+    }
+  }
+  return cleared;
+}
+
+export function buildReviewWaitingStatus(pendingReview, { step, eventTs, isHistorical = false } = {}) {
+  return {
+    state: 'waiting',
+    title: 'Antigravity 等待审阅确认...',
+    detail: pendingReview?.fileName
+      ? `请审阅 ${truncate(pendingReview.fileName, 24)} 并点击 Proceed`
+      : '请点击反重力窗口审阅并确认',
+    step,
+    eventTs,
+    isHistorical,
+    ts: eventTs
+  };
 }
 
 function formatToolDetail(name, args) {
@@ -84,10 +147,16 @@ export class EventParser extends EventEmitter {
     super();
     this.historicalThresholdMs = options.historicalThresholdMs ?? HISTORICAL_THRESHOLD_MS;
     this.currentStep = 0;
+    this.pendingReview = null;
   }
 
   reset() {
     this.currentStep = 0;
+    this.pendingReview = null;
+  }
+
+  clearPendingReview() {
+    this.pendingReview = null;
   }
 
   _emitStatus(payload, silent) {
@@ -124,6 +193,7 @@ export class EventParser extends EventEmitter {
 
       // 1. 用户输入触发
       if (type === 'USER_INPUT') {
+        this.pendingReview = null;
         return this._emitStatus(
           {
             state: 'working',
@@ -141,6 +211,7 @@ export class EventParser extends EventEmitter {
 
       // 2. 错误 / 取消状态（含模型响应或错误步骤）
       if (status === 'ERROR' || status === 'FAILED' || type === 'ERROR' || type === 'ERROR_MESSAGE') {
+        this.pendingReview = null;
         const errText = strArg(error) || strArg(content);
         return this._emitStatus(
           {
@@ -157,6 +228,7 @@ export class EventParser extends EventEmitter {
       }
 
       if (status === 'CANCELED' || status === 'CANCELLED') {
+        this.pendingReview = null;
         return this._emitStatus(
           {
             state: 'standby',
@@ -174,6 +246,19 @@ export class EventParser extends EventEmitter {
       // 3. 模型执行阶段
       if (source === 'MODEL' && type === 'PLANNER_RESPONSE') {
         if (Array.isArray(tool_calls) && tool_calls.length > 0) {
+          const feedback = inspectArtifactFeedback(tool_calls);
+          if (feedback?.requested) {
+            this.pendingReview = { fileName: feedback.fileName, step: this.currentStep };
+          } else if (
+            feedback?.cleared &&
+            this.pendingReview &&
+            (!feedback.fileName ||
+              !this.pendingReview.fileName ||
+              feedback.fileName === this.pendingReview.fileName)
+          ) {
+            this.pendingReview = null;
+          }
+
           const hasAskQuestion = tool_calls.some(
             (call) => call && typeof call === 'object' && call.name === 'ask_question'
           );
@@ -230,6 +315,17 @@ export class EventParser extends EventEmitter {
                 isHistorical: true,
                 ts: eventTs
               },
+              silent
+            );
+          }
+
+          if (this.pendingReview) {
+            return this._emitStatus(
+              buildReviewWaitingStatus(this.pendingReview, {
+                step: this.currentStep,
+                eventTs,
+                isHistorical: false
+              }),
               silent
             );
           }

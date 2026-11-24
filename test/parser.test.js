@@ -260,4 +260,155 @@ describe('EventParser', () => {
     assert.equal(historical.isHistorical, true);
     assert.equal(historical.eventTs, now - 30000);
   });
+
+  it('tracks ArtifactMetadata RequestFeedback waiting state and clears on RequestFeedback:false, USER_INPUT, or historical DONE', () => {
+    const parser = new EventParser();
+    const now = Date.parse('2026-11-24T08:31:45Z');
+
+    // 1. Object-form ArtifactMetadata (from transcript_full.jsonl)
+    const writeReq = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 29,
+        created_at: now - 5000,
+        tool_calls: [
+          {
+            name: 'write_file',
+            args: {
+              Path: 'C:\\brain\\taskbar_notify_test.md',
+              ArtifactMetadata: { RequestFeedback: true, UserFacing: true }
+            }
+          }
+        ]
+      }),
+      { silent: true, now }
+    );
+    assert.equal(writeReq.state, 'working');
+    assert.equal(writeReq.detail, '[写入] taskbar_notify_test.md');
+
+    const reviewWait = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 31,
+        created_at: now - 1000
+      }),
+      { silent: true, now }
+    );
+    assert.equal(reviewWait.state, 'waiting');
+    assert.equal(reviewWait.title, 'Antigravity 等待审阅确认...');
+    assert.match(reviewWait.detail, /taskbar_notify_test\.md/);
+    assert.match(reviewWait.detail, /Proceed/);
+
+    // USER_INPUT clears pendingReview so the next turn completes normally
+    parser.processLine(
+      JSON.stringify({ type: 'USER_INPUT', step_index: 32, created_at: now }),
+      { silent: true, now }
+    );
+    const nextDone = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 33,
+        created_at: now
+      }),
+      { silent: true, now }
+    );
+    assert.equal(nextDone.state, 'completed');
+
+    // 2. JSON-string ArtifactMetadata (from transcript.jsonl) & RequestFeedback:false clearing
+    parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 34,
+        created_at: now - 2000,
+        tool_calls: [
+          {
+            name: 'edit_file',
+            args: {
+              Path: '"C:\\\\brain\\\\plan.md"',
+              ArtifactMetadata: JSON.stringify({ RequestFeedback: true })
+            }
+          }
+        ]
+      }),
+      { silent: true, now }
+    );
+    assert.ok(parser.pendingReview);
+    assert.equal(parser.pendingReview.fileName, 'plan.md');
+
+    // Historical DONE (>20s) still yields standby instead of stale waiting
+    const staleDone = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 35,
+        created_at: now - 30000
+      }),
+      { silent: true, now }
+    );
+    assert.equal(staleDone.state, 'standby');
+
+    // RequestFeedback: false on same file clears pendingReview
+    parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 36,
+        created_at: now - 1000,
+        tool_calls: [
+          {
+            name: 'edit_file',
+            args: {
+              Path: 'C:\\brain\\plan.md',
+              ArtifactMetadata: { RequestFeedback: false }
+            }
+          }
+        ]
+      }),
+      { silent: true, now }
+    );
+    assert.equal(parser.pendingReview, null);
+    const completedAfterClear = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 37,
+        created_at: now
+      }),
+      { silent: true, now }
+    );
+    assert.equal(completedAfterClear.state, 'completed');
+  });
+
+  it('unwraps JSON-stringified CommandLine arguments with escaped quotes', () => {
+    const parser = new EventParser();
+    const res = parser.processLine(
+      JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        source: 'MODEL',
+        status: 'DONE',
+        step_index: 40,
+        tool_calls: [
+          {
+            name: 'run_command',
+            args: {
+              CommandLine: JSON.stringify('Get-ChildItem -Path "C:\\Users\\demo"')
+            }
+          }
+        ]
+      }),
+      { silent: true }
+    );
+    assert.equal(res.detail, '[命令] Get-ChildItem -Path "C:\\Users\\demo"');
+  });
 });

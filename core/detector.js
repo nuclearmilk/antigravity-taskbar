@@ -4,6 +4,21 @@ import os from 'os';
 import { EventEmitter } from 'events';
 
 const DEFAULT_PRODUCTS = ['antigravity', 'antigravity-cli', 'antigravity-ide'];
+const TRANSCRIPT_FILES = ['transcript_full.jsonl', 'transcript.jsonl'];
+
+function normalizePathKey(p) {
+  if (typeof p !== 'string' || !p.trim()) return '';
+  const resolved = path.resolve(p);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isFullTranscriptPath(p) {
+  return typeof p === 'string' && path.basename(p).toLowerCase() === 'transcript_full.jsonl';
+}
+
+function isCompactTranscriptPath(p) {
+  return typeof p === 'string' && path.basename(p).toLowerCase() === 'transcript.jsonl';
+}
 
 function resolveBaseDirs(options = {}) {
   if (Array.isArray(options.baseDirs) && options.baseDirs.length > 0) {
@@ -51,23 +66,21 @@ export class ConversationDetector extends EventEmitter {
     const convs = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const transcriptPath = path.join(
-        baseDir,
-        entry.name,
-        '.system_generated',
-        'logs',
-        'transcript.jsonl'
-      );
-      try {
-        const stat = await fs.stat(transcriptPath);
-        convs.push({
-          id: entry.name,
-          transcriptPath,
-          mtimeMs: stat.mtimeMs,
-          size: stat.size
-        });
-      } catch {
-        // transcript.jsonl does not exist yet
+      const logsDir = path.join(baseDir, entry.name, '.system_generated', 'logs');
+      for (const fileName of TRANSCRIPT_FILES) {
+        const transcriptPath = path.join(logsDir, fileName);
+        try {
+          const stat = await fs.stat(transcriptPath);
+          convs.push({
+            id: entry.name,
+            transcriptPath,
+            mtimeMs: stat.mtimeMs,
+            size: stat.size
+          });
+          break;
+        } catch {
+          // transcript file does not exist yet
+        }
       }
     }
 
@@ -88,9 +101,13 @@ export class ConversationDetector extends EventEmitter {
       const active = await this.detectActiveConversation();
       if (!active || this._stopped) return;
 
+      const samePath =
+        normalizePathKey(active.transcriptPath) === normalizePathKey(this.currentTranscriptPath);
+      const keepFullOverCompact =
+        isFullTranscriptPath(this.currentTranscriptPath) &&
+        isCompactTranscriptPath(active.transcriptPath);
       const sameConv =
-        active.id === this.currentConvId &&
-        active.transcriptPath === this.currentTranscriptPath;
+        active.id === this.currentConvId && (samePath || keepFullOverCompact);
       if (sameConv) {
         this.lastMtime = active.mtimeMs;
         return;
