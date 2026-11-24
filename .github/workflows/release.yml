@@ -1,0 +1,81 @@
+name: Test & Release
+
+on:
+  # 1. 推送或 PR 到 main：自动在 Windows 上跑单测（极速，不打包）
+  push:
+    branches: [main]
+    tags:
+      - 'v*' # 2. 推送 v 开头标签（如 v1.1.0）：自动测试 + 打包 + 发布 Release
+  pull_request:
+    branches: [main]
+  # 3. 支持在 GitHub Actions 网页手动点按钮触发
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '可选：手动指定发布版本号（如 v1.1.0；留空则仅跑测试）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 运行单元测试
+        run: npm test
+
+      - name: 安装 Windows Electron 运行时（仅发版时）
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        run: npm ci --omit=dev
+
+      - name: 打包源码版与 Windows 免安装完整版
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $stage = "dist/antigravity-taskbar"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          # 1) 轻量源码包（不含 node_modules）
+          Copy-Item -Recurse -Force core, desktop, ui, hooks.json, plugin.json, package.json, package-lock.json, LICENSE, README.md $stage
+          7z a -tzip "dist/antigravity-taskbar-$env:TAG-source.zip" "./$stage"
+
+          # 2) Windows x64 开箱即用包（含 Electron，解压到 ~/.gemini/config/plugins/ 直接启用）
+          Copy-Item -Recurse -Force node_modules $stage
+          7z a -tzip "dist/antigravity-taskbar-$env:TAG-win32-x64.zip" "./$stage"
+
+          Get-FileHash "dist/*.zip" -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: 自动创建/更新 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $sourceZip = "dist/antigravity-taskbar-$env:TAG-source.zip"
+          $winZip = "dist/antigravity-taskbar-$env:TAG-win32-x64.zip"
+
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $sourceZip $winZip --clobber
+          } else {
+            gh release create $env:TAG $sourceZip $winZip `
+              --title $env:TAG `
+              --generate-notes
+          }
