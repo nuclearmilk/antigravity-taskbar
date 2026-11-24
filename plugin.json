@@ -2,7 +2,7 @@
   "name": "antigravity-taskbar",
   "displayName": "Antigravity Taskbar Status",
   "description": "Windows 任务栏嵌入式状态栏，实时展示反重力后台 Agent 执行进度与状态",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "nuclearmilk",
   "homepage": "https://github.com/nuclearmilk/antigravity-taskbar",
   "repository": "https://github.com/nuclearmilk/antigravity-taskbar"
